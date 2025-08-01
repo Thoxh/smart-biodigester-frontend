@@ -1,54 +1,194 @@
-// app/page.tsx
+/**
+ * @fileoverview Smart Biodigester Dashboard - Main monitoring interface
+ * 
+ * This is the primary dashboard page for the Smart Biodigester monitoring system.
+ * It displays real-time sensor data including temperature, pH, humidity, pressure,
+ * and methane measurements with alarm notifications and status indicators.
+ * 
+ * Key Features:
+ * - Real-time data updates via Supabase subscriptions
+ * - Individual alarm monitoring for each temperature sensor
+ * - Critical alert notifications with visual indicators
+ * - Responsive design optimized for mobile and desktop
+ * - Automatic polling fallback for connection reliability
+ * 
+ * @author Tim Siebert & Max Zboralski
+ * @version 1.0.0
+ * @since 2025-08-31
+ */
+
 'use client'
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 
+/**
+ * Represents a complete sensor data record from the biodigester monitoring system.
+ * 
+ * This type defines the structure of sensor data as stored in the Supabase database.
+ * All sensor values are nullable to handle cases where sensors may be offline,
+ * malfunctioning, or not yet initialized.
+ * 
+ * @interface SensorData
+ */
 type SensorData = {
+  /** ISO timestamp when the sensor reading was recorded */
   timestamp: string
+  
+  /** pH value of the biodigester contents (optimal range: 6-8) */
   ph: number | null
+  
+  /** Raw voltage reading from the pH sensor for diagnostics */
   ph_voltage: number | null
+  
+  /** Temperature reading from tank sensor 1 in Celsius (optimal: 30-40°C) */
   temp1: number | null
+  
+  /** Temperature reading from tank sensor 2 in Celsius (optimal: 30-40°C) */
   temp2: number | null
+  
+  /** Ambient temperature from BME280 sensor in Celsius */
   bme_temperature: number | null
+  
+  /** Relative humidity percentage from BME280 sensor */
   bme_humidity: number | null
+  
+  /** Atmospheric pressure in hPa from BME280 sensor */
   bme_pressure: number | null
+  
+  /** Gas resistance reading from BME280 sensor for air quality */
   bme_gas_resistance: number | null
+  
+  /** Raw methane sensor output data for debugging purposes */
   methan_raw: string[] | null
+  
+  /** Processed methane concentration in parts per million (ppm) */
   methane_ppm: number | null
+  
+  /** Methane concentration as percentage of total gas volume */
   methane_percent: number | null
+  
+  /** Temperature reading from the methane sensor in Celsius */
   methane_temperature: number | null
+  
+  /** Array of fault messages from the methane sensor system */
   methane_faults: string[] | null
 }
 
-// Alarm definitions
+/**
+ * Alarm threshold definitions for critical biodigester parameters.
+ * 
+ * These ranges define the optimal operating conditions for the biodigester.
+ * Values outside these ranges trigger visual and system alerts to notify
+ * operators of potentially problematic conditions.
+ * 
+ * @constant ALARM_RANGES
+ */
 const ALARM_RANGES = {
+  /** 
+   * Optimal temperature range for biodigester tank operation.
+   * Below 30°C: Reduced microbial activity and gas production
+   * Above 40°C: Risk of killing beneficial bacteria
+   */
   tank_temperature: { min: 30, max: 40 },
+  
+  /** 
+   * Optimal pH range for anaerobic digestion process.
+   * Below 6: Too acidic, inhibits methanogenic bacteria
+   * Above 8: Too alkaline, can cause ammonia toxicity
+   */
   ph: { min: 6, max: 8 }
 }
 
-// Helper function for alarm status
+/**
+ * Determines the alarm status for a sensor value based on defined thresholds.
+ * 
+ * This utility function evaluates sensor readings against optimal ranges and
+ * returns a standardized status that drives UI color coding and alert logic.
+ * 
+ * @param value - The sensor reading to evaluate (null if sensor offline)
+ * @param range - Object containing min/max threshold values
+ * @returns {'unknown' | 'safe' | 'critical'} Status classification
+ * 
+ * @example
+ * ```typescript
+ * const status = getAlarmStatus(35, { min: 30, max: 40 }); // 'safe'
+ * const status = getAlarmStatus(45, { min: 30, max: 40 }); // 'critical'
+ * const status = getAlarmStatus(null, { min: 30, max: 40 }); // 'unknown'
+ * ```
+ */
 function getAlarmStatus(value: number | null, range: { min: number, max: number }) {
   if (value === null || value === undefined) return 'unknown'
   if (value >= range.min && value <= range.max) return 'safe'
   return 'critical'
 }
 
-// Helper functions for individual tank temperature alarms
+/**
+ * Evaluates alarm status for tank temperature sensor 1.
+ * 
+ * Provides individual monitoring for the first tank temperature sensor,
+ * enabling separate status tracking and alert management for each sensor.
+ * This separation allows operators to identify which specific sensor
+ * is experiencing issues.
+ * 
+ * @param temp1 - Temperature reading from sensor 1 in Celsius
+ * @returns {'unknown' | 'safe' | 'critical'} Alarm status for temp1
+ */
 function getTemp1Alarm(temp1: number | null) {
   return getAlarmStatus(temp1, ALARM_RANGES.tank_temperature)
 }
 
+/**
+ * Evaluates alarm status for tank temperature sensor 2.
+ * 
+ * Provides individual monitoring for the second tank temperature sensor,
+ * enabling separate status tracking and alert management for each sensor.
+ * This separation allows operators to identify which specific sensor
+ * is experiencing issues.
+ * 
+ * @param temp2 - Temperature reading from sensor 2 in Celsius
+ * @returns {'unknown' | 'safe' | 'critical'} Alarm status for temp2
+ */
 function getTemp2Alarm(temp2: number | null) {
   return getAlarmStatus(temp2, ALARM_RANGES.tank_temperature)
 }
 
+/**
+ * Main dashboard component for the Smart Biodigester monitoring system.
+ * 
+ * This component serves as the primary interface for real-time monitoring of
+ * biodigester sensor data. It provides live updates, alarm notifications,
+ * and comprehensive status information for all connected sensors.
+ * 
+ * Features:
+ * - Real-time data subscription via Supabase
+ * - Automatic polling fallback for reliability
+ * - Individual sensor alarm monitoring
+ * - Responsive mobile-first design
+ * - Critical alert notifications
+ * 
+ * @component
+ * @returns {JSX.Element} The main dashboard interface
+ */
 export default function Home() {
+  /** Current sensor data state - null when no data available */
   const [data, setData] = useState<SensorData | null>(null)
+  
+  /** Loading state indicator for initial data fetch */
   const [loading, setLoading] = useState(true)
 
-  // Helper to fetch the latest entry
+  /**
+   * Fetches the most recent sensor data record from the database.
+   * 
+   * This function retrieves the latest sensor reading and updates the component state.
+   * It's used both for initial data loading and as a polling fallback mechanism
+   * to ensure data freshness even if real-time subscriptions fail.
+   * 
+   * @async
+   * @function fetchLatest
+   * @returns {Promise<void>} Resolves when data fetch is complete
+   */
   const fetchLatest = async () => {
     setLoading(true)
     const { data: rows } = await supabase
@@ -60,9 +200,22 @@ export default function Home() {
     setLoading(false)
   }
 
-  // Subscribe to changes in real-time
+  /**
+   * Effect hook for setting up real-time data subscriptions and polling.
+   * 
+   * This effect establishes a robust data fetching strategy using multiple approaches:
+   * 1. Initial data fetch on component mount
+   * 2. Real-time subscription to database changes via Supabase
+   * 3. Polling fallback every 12 seconds for reliability
+   * 
+   * The combination ensures data freshness even in cases of network issues,
+   * subscription failures, or other connectivity problems.
+   */
   useEffect(() => {
+    // Initial data fetch
     fetchLatest()
+    
+    // Set up real-time subscription for immediate updates
     const sub = supabase
       .channel('sensor_data_realtime')
       .on(
@@ -74,9 +227,11 @@ export default function Home() {
       )
       .subscribe()
 
-    // Polling fallback for robustness
+    // Polling fallback every 12 seconds for robustness
+    // This ensures data updates even if real-time subscription fails
     const poll = setInterval(fetchLatest, 12000)
 
+    // Cleanup function to prevent memory leaks
     return () => {
       sub.unsubscribe()
       clearInterval(poll)
@@ -95,6 +250,22 @@ export default function Home() {
   const temp2Alarm = getTemp2Alarm(data?.temp2 ?? null)
   const phAlarm = getAlarmStatus(data?.ph ?? null, ALARM_RANGES.ph)
 
+  /**
+   * Formats ISO timestamp strings for user-friendly display.
+   * 
+   * Converts database timestamp strings into a readable format suitable
+   * for display in the dashboard interface. Uses English locale formatting
+   * with full date and time information including seconds for precision.
+   * 
+   * @param timestamp - ISO timestamp string from the database
+   * @returns {string} Formatted timestamp string (e.g., "Jan 15, 2024, 02:30:45 PM")
+   * 
+   * @example
+   * ```typescript
+   * formatTimestamp('2024-01-15T14:30:45.123Z')
+   * // Returns: "Jan 15, 2024, 02:30:45 PM"
+   * ```
+   */
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp)
     // No timezone correction needed - time is already correct
@@ -240,12 +411,60 @@ export default function Home() {
   )
 }
 
+/**
+ * Formats sensor values for consistent display across the dashboard.
+ * 
+ * This utility function handles the formatting of various sensor readings,
+ * ensuring consistent presentation of numeric values and proper handling
+ * of null/undefined states. Uses an em dash (–) for missing values to
+ * maintain visual consistency.
+ * 
+ * @param val - The sensor value to format (number, string, null, or undefined)
+ * @returns {string} Formatted value string
+ * 
+ * @example
+ * ```typescript
+ * format(23.456)     // Returns: "23.46"
+ * format(null)       // Returns: "–"
+ * format(undefined)  // Returns: "–"
+ * format(NaN)        // Returns: "–"
+ * format("OK")       // Returns: "OK"
+ * ```
+ */
 function format(val: number | string | null | undefined) {
   if (val === null || val === undefined || Number.isNaN(val)) return '–'
   if (typeof val === 'number') return val.toFixed(2)
   return val
 }
 
+/**
+ * Reusable component for displaying labeled sensor values with alarm status.
+ * 
+ * This component provides a consistent visual format for sensor readings
+ * throughout the dashboard. It includes automatic color coding based on
+ * alarm status and responsive design for mobile compatibility.
+ * 
+ * Color Coding:
+ * - Red (text-red-600): Critical alarm state
+ * - Green (text-green-600): Safe/optimal state
+ * - Gray (text-gray-900): Unknown or normal state
+ * 
+ * @component
+ * @param {Object} props - Component properties
+ * @param {string} props.label - Display label for the sensor reading
+ * @param {string | number} props.value - The formatted sensor value to display
+ * @param {string} [props.alarm] - Optional alarm status ('critical', 'safe', or undefined)
+ * @returns {JSX.Element} Formatted sensor value card
+ * 
+ * @example
+ * ```tsx
+ * <LabelVal 
+ *   label="Tank Temperature [°C]" 
+ *   value="35.2" 
+ *   alarm="safe" 
+ * />
+ * ```
+ */
 function LabelVal({ label, value, alarm }: { label: string, value: string | number, alarm?: string }) {
   return (
     <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">

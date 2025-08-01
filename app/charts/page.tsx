@@ -1,3 +1,31 @@
+/**
+ * @fileoverview Charts Page - Advanced sensor data visualization and analysis
+ * 
+ * This page provides comprehensive charting capabilities for the Smart Biodigester
+ * monitoring system. It offers interactive time-series visualizations with multiple
+ * time ranges, adaptive scaling, alarm zones, and mobile-responsive design.
+ * 
+ * Key Features:
+ * - Interactive time-series charts for all sensor parameters
+ * - Multiple time range selections (1h, 12h, 1d, 1w, 1m)
+ * - Adaptive Y-axis scaling based on time range and data variance
+ * - Visual alarm zones with color-coded optimal ranges
+ * - Mobile-responsive design with touch-friendly controls
+ * - Real-time data fetching from Supabase
+ * - Performance-optimized data sampling for large datasets
+ * - Enhanced tooltips with precise timestamp information
+ * 
+ * Technical Implementation:
+ * - Uses Recharts library for high-performance charting
+ * - Implements data sampling for week/month views
+ * - Mobile-first responsive design approach
+ * - TypeScript for type safety and better developer experience
+ * 
+ * @author Tim Siebert & Max Zboralski
+ * @version 2.0.0
+ * @since 2025-08-31
+ */
+
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -19,54 +47,165 @@ import {
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 
+/**
+ * Raw sensor data structure as stored in the Supabase database.
+ * 
+ * This type mirrors the database schema for sensor readings and includes
+ * all available sensor parameters. Used for data fetching and initial
+ * processing before transformation into chart-ready format.
+ * 
+ * @interface SensorData
+ * @see ChartDataPoint for the processed chart data structure
+ */
 type SensorData = {
+  /** ISO timestamp when the sensor reading was recorded */
   timestamp: string
+  
+  /** pH value of the biodigester contents (optimal range: 6-8) */
   ph: number | null
+  
+  /** Raw voltage reading from the pH sensor for diagnostics */
   ph_voltage: number | null
+  
+  /** Temperature reading from tank sensor 1 in Celsius (optimal: 30-40°C) */
   temp1: number | null
+  
+  /** Temperature reading from tank sensor 2 in Celsius (optimal: 30-40°C) */
   temp2: number | null
+  
+  /** Ambient temperature from BME280 sensor in Celsius */
   bme_temperature: number | null
+  
+  /** Relative humidity percentage from BME280 sensor */
   bme_humidity: number | null
+  
+  /** Atmospheric pressure in hPa from BME280 sensor */
   bme_pressure: number | null
+  
+  /** Gas resistance reading from BME280 sensor for air quality */
   bme_gas_resistance: number | null
+  
+  /** Raw methane sensor output data for debugging purposes */
   methan_raw: string[] | null
+  
+  /** Processed methane concentration in parts per million (ppm) */
   methane_ppm: number | null
+  
+  /** Methane concentration as percentage of total gas volume */
   methane_percent: number | null
+  
+  /** Temperature reading from the methane sensor in Celsius */
   methane_temperature: number | null
+  
+  /** Array of fault messages from the methane sensor system */
   methane_faults: string[] | null
 }
 
+/**
+ * Processed data structure optimized for chart rendering and display.
+ * 
+ * This type represents sensor data after processing and formatting for
+ * visualization. It includes multiple timestamp formats for different
+ * display contexts and optional sensor values for flexible chart rendering.
+ * 
+ * @interface ChartDataPoint
+ * @see SensorData for the raw database structure
+ */
 type ChartDataPoint = {
+  /** Formatted timestamp string for chart X-axis display */
   timestamp: string
+  
+  /** Original ISO timestamp preserved for accurate tooltip display */
   originalTimestamp: string
+  
+  /** Human-readable date string for chart labeling */
   date: string
+  
+  /** pH value (optional for charts that don't include pH data) */
   ph?: number
+  
+  /** pH sensor voltage (optional, used in diagnostic charts) */
   ph_voltage?: number
+  
+  /** Tank temperature sensor 1 reading in Celsius */
   temp1?: number
+  
+  /** Tank temperature sensor 2 reading in Celsius */
   temp2?: number
+  
+  /** BME280 ambient temperature in Celsius */
   bme_temperature?: number
+  
+  /** BME280 relative humidity percentage */
   bme_humidity?: number
+  
+  /** BME280 atmospheric pressure in hPa */
   bme_pressure?: number
+  
+  /** BME280 gas resistance for air quality monitoring */
   bme_gas_resistance?: number
+  
+  /** Methane concentration in parts per million */
   methane_ppm?: number
+  
+  /** Methane concentration as percentage */
   methane_percent?: number
+  
+  /** Methane sensor temperature reading */
   methane_temperature?: number
 }
 
+/**
+ * Configuration for visual alarm zones displayed on charts.
+ * 
+ * Alarm zones provide visual context for sensor readings by highlighting
+ * optimal, warning, and critical ranges directly on the chart background.
+ * Each zone is rendered as a colored area with transparency.
+ * 
+ * @interface AlarmZone
+ */
 type AlarmZone = {
+  /** Minimum value for this alarm zone range */
   min: number
+  
+  /** Maximum value for this alarm zone range */
   max: number
+  
+  /** Descriptive label for the alarm zone (e.g., "Optimal (30-40°C)") */
   label: string
+  
+  /** Hex color code for the zone background (e.g., "#22c55e") */
   color: string
 }
 
-// Alarm definitions
+/**
+ * Visual alarm zone definitions for chart background highlighting.
+ * 
+ * These zones provide immediate visual context for sensor readings by
+ * displaying colored background areas on charts. Each parameter has
+ * multiple zones representing different operational states.
+ * 
+ * Color Coding:
+ * - Green (#22c55e): Optimal operating range
+ * - Blue (#3b82f6): Suboptimal but acceptable range
+ * - Red (#ef4444): Critical range requiring attention
+ * 
+ * @constant ALARM_ZONES
+ */
 const ALARM_ZONES = {
+  /** 
+   * Temperature alarm zones for biodigester tank sensors.
+   * Based on optimal anaerobic digestion temperature requirements.
+   */
   tank_temperature: [
     { min: 0, max: 30, label: 'Too cold (<30°C)', color: '#3b82f6' },
     { min: 30, max: 40, label: 'Optimal (30-40°C)', color: '#22c55e' },
     { min: 40, max: 80, label: 'Too hot (>40°C)', color: '#ef4444' }
   ],
+  /** 
+   * pH alarm zones for biodigester contents.
+   * Based on optimal pH range for methanogenic bacteria.
+   */
   ph: [
     { min: 0, max: 6, label: 'Too acidic (<6)', color: '#ef4444' },
     { min: 6, max: 8, label: 'Optimal (6-8)', color: '#22c55e' },
@@ -74,22 +213,84 @@ const ALARM_ZONES = {
   ]
 }
 
-// Time range options
+/**
+ * Available time range options for chart data visualization.
+ * 
+ * Each time range defines both the display label and the number of hours
+ * of historical data to fetch and display. The ranges are optimized for
+ * different analysis needs from real-time monitoring to long-term trends.
+ * 
+ * @constant TIME_RANGES
+ */
 const TIME_RANGES = {
+  /** Last hour - for real-time monitoring and immediate trend analysis */
   '1h': { label: 'Last Hour', hours: 1 },
+  
+  /** Last 12 hours - for short-term trend analysis and shift monitoring */
   '12h': { label: 'Last 12 Hours', hours: 12 },
+  
+  /** Last day - for daily pattern analysis and 24-hour cycles */
   '1d': { label: 'Last Day', hours: 24 },
+  
+  /** Last week - for weekly trends and pattern identification */
   '1w': { label: 'Last Week', hours: 24 * 7 },
+  
+  /** Last month - for long-term trend analysis and seasonal patterns */
   '1m': { label: 'Last Month', hours: 24 * 30 }
 } as const
 
+/**
+ * Type definition for time range selection keys.
+ * 
+ * Ensures type safety when working with time range selections
+ * and provides autocomplete support in development.
+ * 
+ * @type TimeRangeKey
+ */
 type TimeRangeKey = keyof typeof TIME_RANGES
 
+/**
+ * Main charts page component for sensor data visualization.
+ * 
+ * This component provides comprehensive charting capabilities for all sensor
+ * parameters with interactive time range selection, responsive design, and
+ * advanced features like adaptive scaling and alarm zones.
+ * 
+ * State Management:
+ * - Manages sensor data fetching and caching
+ * - Handles time range selection and filtering
+ * - Controls loading states and error handling
+ * 
+ * @component
+ * @returns {JSX.Element} The complete charts page interface
+ */
 export default function ChartsPage() {
+  /** Array of sensor data records for the selected time range */
   const [data, setData] = useState<SensorData[]>([])
+  
+  /** Loading state indicator for data fetch operations */
   const [loading, setLoading] = useState(true)
+  
+  /** Currently selected time range for data visualization */
   const [selectedTimeRange, setSelectedTimeRange] = useState<TimeRangeKey>('1d')
 
+  /**
+   * Fetches sensor data from Supabase for the specified time range.
+   * 
+   * This function calculates the appropriate start time based on the selected
+   * time range and retrieves all sensor records within that period. Data is
+   * ordered chronologically for proper chart rendering.
+   * 
+   * Error Handling:
+   * - Logs database errors to console for debugging
+   * - Gracefully handles network failures
+   * - Ensures loading state is properly reset
+   * 
+   * @async
+   * @function fetchData
+   * @param {TimeRangeKey} timeRange - The time range key to fetch data for
+   * @returns {Promise<void>} Resolves when data fetch is complete
+   */
   const fetchData = async (timeRange: TimeRangeKey) => {
     setLoading(true)
     try {
@@ -120,11 +321,49 @@ export default function ChartsPage() {
     fetchData(selectedTimeRange)
   }, [selectedTimeRange])
 
+  /**
+   * Handles time range selection changes from the UI.
+   * 
+   * Updates the selected time range state, which triggers a useEffect
+   * to fetch new data for the selected range. This provides a clean
+   * separation between UI interaction and data fetching logic.
+   * 
+   * @function handleTimeRangeChange
+   * @param {TimeRangeKey} timeRange - The newly selected time range
+   * 
+   * @example
+   * ```typescript
+   * handleTimeRangeChange('1w') // Updates time range to last week
+   * ```
+   */
   const handleTimeRangeChange = (timeRange: TimeRangeKey) => {
     setSelectedTimeRange(timeRange)
   }
 
-  // Format timestamp for display based on time range
+  /**
+   * Formats timestamps for chart X-axis display based on the selected time range.
+   * 
+   * Different time ranges require different timestamp formatting for optimal
+   * readability and space utilization. Short ranges show more detail (hours/minutes)
+   * while longer ranges focus on dates.
+   * 
+   * Formatting Strategy:
+   * - 1h/12h: Time only (HH:MM) for detailed time tracking
+   * - 1d: Date + time for daily patterns
+   * - 1w/1m: Date only for trend analysis
+   * 
+   * @function formatTimestamp
+   * @param {string} timestamp - ISO timestamp string to format
+   * @param {TimeRangeKey} timeRange - Current time range selection
+   * @returns {string} Formatted timestamp string for display
+   * 
+   * @example
+   * ```typescript
+   * formatTimestamp('2024-01-15T14:30:00Z', '1h') // "02:30 PM"
+   * formatTimestamp('2024-01-15T14:30:00Z', '1d') // "Jan 15, 02:30 PM"
+   * formatTimestamp('2024-01-15T14:30:00Z', '1w') // "Jan 15"
+   * ```
+   */
   const formatTimestamp = (timestamp: string, timeRange: TimeRangeKey) => {
     const date = new Date(timestamp)
     
@@ -157,12 +396,7 @@ export default function ChartsPage() {
           day: 'numeric'
         })
       default:
-        return date.toLocaleString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        })
+        return date.toLocaleString('en-US')
     }
   }
 
@@ -417,6 +651,48 @@ export default function ChartsPage() {
   )
 }
 
+/**
+ * Advanced sensor chart component with adaptive scaling and mobile optimization.
+ * 
+ * This component renders interactive time-series charts for sensor data with
+ * comprehensive features including alarm zones, adaptive Y-axis scaling,
+ * mobile-responsive design, and performance optimizations.
+ * 
+ * Key Features:
+ * - Adaptive Y-axis scaling based on time range and data variance
+ * - Visual alarm zones with color-coded backgrounds
+ * - Mobile-responsive tick spacing and font sizes
+ * - Performance-optimized data filtering and sampling
+ * - Enhanced tooltips with precise timestamp information
+ * - Automatic null/undefined value handling
+ * 
+ * @component
+ * @param {Object} props - Component properties
+ * @param {string} props.title - Chart title displayed in the card header
+ * @param {string} props.description - Chart description for context
+ * @param {ChartDataPoint[]} props.data - Array of processed chart data points
+ * @param {string[]} props.dataKeys - Array of data keys to plot as lines
+ * @param {ChartConfig} props.config - Recharts configuration for styling
+ * @param {[number, number]} [props.domain] - Fixed Y-axis domain range
+ * @param {boolean} [props.autoScale] - Enable adaptive Y-axis scaling
+ * @param {AlarmZone[]} [props.alarmZones] - Alarm zones for background highlighting
+ * @param {TimeRangeKey} props.timeRange - Current time range selection
+ * @returns {JSX.Element} Rendered sensor chart component
+ * 
+ * @example
+ * ```tsx
+ * <SensorChart
+ *   title="Tank Temperature"
+ *   description="Temperature readings from tank sensors"
+ *   data={chartData}
+ *   dataKeys={['temp1', 'temp2']}
+ *   config={tempConfig}
+ *   alarmZones={ALARM_ZONES.tank_temperature}
+ *   timeRange="1d"
+ *   autoScale={true}
+ * />
+ * ```
+ */
 function SensorChart({
   title,
   description,
