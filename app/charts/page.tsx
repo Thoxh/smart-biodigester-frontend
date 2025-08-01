@@ -236,7 +236,10 @@ const TIME_RANGES = {
   '1w': { label: 'Last Week', hours: 24 * 7 },
   
   /** Last month - for long-term trend analysis and seasonal patterns */
-  '1m': { label: 'Last Month', hours: 24 * 30 }
+  '1m': { label: 'Last Month', hours: 24 * 30 },
+  
+  /** Custom date range - for user-defined time periods */
+  'custom': { label: 'Custom Range', hours: 0 }
 } as const
 
 /**
@@ -273,18 +276,20 @@ export default function ChartsPage() {
   
   /** Currently selected time range for data visualization */
   const [selectedTimeRange, setSelectedTimeRange] = useState<TimeRangeKey>('1d')
+  
+  /** Start date for custom date range selection */
+  const [customStartDate, setCustomStartDate] = useState<string>('')
+  
+  /** End date for custom date range selection */
+  const [customEndDate, setCustomEndDate] = useState<string>('')
 
   /**
    * Fetches sensor data from Supabase for the specified time range.
    * 
    * This function calculates the appropriate start time based on the selected
-   * time range and retrieves all sensor records within that period. Data is
-   * ordered chronologically for proper chart rendering.
-   * 
-   * Error Handling:
-   * - Logs database errors to console for debugging
-   * - Gracefully handles network failures
-   * - Ensures loading state is properly reset
+   * time range and retrieves all sensor records within that period. For custom
+   * ranges, it uses the user-defined start and end dates. Data is sorted by
+   * timestamp in ascending order for proper chart rendering.
    * 
    * @async
    * @function fetchData
@@ -294,24 +299,47 @@ export default function ChartsPage() {
   const fetchData = async (timeRange: TimeRangeKey) => {
     setLoading(true)
     try {
-      const now = new Date()
-      const hoursAgo = TIME_RANGES[timeRange].hours
-      const startTime = new Date(now.getTime() - hoursAgo * 60 * 60 * 1000)
-
+      let startTime: Date
+      let endTime: Date
+      
+      if (timeRange === 'custom') {
+        // Use custom date range if selected
+        if (!customStartDate || !customEndDate) {
+          console.error('Custom date range requires both start and end dates')
+          setLoading(false)
+          return
+        }
+        startTime = new Date(customStartDate)
+        endTime = new Date(customEndDate)
+        
+        // Ensure end date is after start date
+        if (endTime <= startTime) {
+          console.error('End date must be after start date')
+          setLoading(false)
+          return
+        }
+      } else {
+        // Use predefined time range
+        const now = new Date()
+        startTime = new Date(now.getTime() - TIME_RANGES[timeRange].hours * 60 * 60 * 1000)
+        endTime = now
+      }
+      
       const { data: sensorData, error } = await supabase
         .from('sensor_data')
         .select('*')
         .gte('timestamp', startTime.toISOString())
-        .order('timestamp', { ascending: true }) // Get chronological order
-
+        .lte('timestamp', endTime.toISOString())
+        .order('timestamp', { ascending: true })
+      
       if (error) {
-        console.error('Error fetching sensor data:', error)
+        console.error('Error fetching data:', error)
         return
       }
-
+      
       setData(sensorData || [])
     } catch (error) {
-      console.error('Error:', error)
+      console.error('Error fetching data:', error)
     } finally {
       setLoading(false)
     }
@@ -320,26 +348,43 @@ export default function ChartsPage() {
   useEffect(() => {
     fetchData(selectedTimeRange)
   }, [selectedTimeRange])
+  
+  // Fetch data when custom dates change
+  useEffect(() => {
+    if (selectedTimeRange === 'custom' && customStartDate && customEndDate) {
+      fetchData('custom')
+    }
+  }, [customStartDate, customEndDate, selectedTimeRange])
 
   /**
    * Handles time range selection changes from the UI.
    * 
    * Updates the selected time range state, which triggers a useEffect
-   * to fetch new data for the selected range. This provides a clean
+   * to fetch new data for the selected range. For custom ranges, it
+   * sets default dates if none are selected. This provides a clean
    * separation between UI interaction and data fetching logic.
    * 
-   * @function handleTimeRangeChange
    * @param {TimeRangeKey} timeRange - The newly selected time range
    * 
    * @example
    * ```typescript
    * handleTimeRangeChange('1w') // Updates time range to last week
+   * handleTimeRangeChange('custom') // Switches to custom date range
    * ```
    */
   const handleTimeRangeChange = (timeRange: TimeRangeKey) => {
     setSelectedTimeRange(timeRange)
+    
+    // Set default dates for custom range if none are selected
+    if (timeRange === 'custom' && (!customStartDate || !customEndDate)) {
+      const now = new Date()
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+      
+      setCustomStartDate(weekAgo.toISOString().split('T')[0])
+      setCustomEndDate(now.toISOString().split('T')[0])
+    }
   }
-
+  
   /**
    * Formats timestamps for chart X-axis display based on the selected time range.
    * 
@@ -471,20 +516,66 @@ export default function ChartsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
-              {Object.entries(TIME_RANGES).map(([key, range]) => (
-                <Button
-                  key={key}
-                  variant={selectedTimeRange === key ? "default" : "outline"}
-                  onClick={() => handleTimeRangeChange(key as TimeRangeKey)}
-                  className={`text-xs sm:text-sm ${
-                    selectedTimeRange === key ? "bg-blue-600 hover:bg-blue-700" : ""
-                  }`}
-                  size="sm"
-                >
-                  {range.label}
-                </Button>
-              ))}
+            <div className="space-y-4">
+              {/* Predefined Time Range Buttons */}
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
+                {Object.entries(TIME_RANGES).map(([key, range]) => (
+                  <Button
+                    key={key}
+                    variant={selectedTimeRange === key ? "default" : "outline"}
+                    onClick={() => handleTimeRangeChange(key as TimeRangeKey)}
+                    className={`text-xs sm:text-sm ${
+                      selectedTimeRange === key ? "bg-blue-600 hover:bg-blue-700" : ""
+                    }`}
+                    size="sm"
+                  >
+                    {range.label}
+                  </Button>
+                ))}
+              </div>
+              
+              {/* Custom Date Range Selector */}
+              {selectedTimeRange === 'custom' && (
+                <div className="border-t pt-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label htmlFor="start-date" className="text-sm font-medium text-gray-700">
+                        Von (Start Date)
+                      </label>
+                      <input
+                        id="start-date"
+                        type="date"
+                        value={customStartDate}
+                        onChange={(e) => setCustomStartDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label htmlFor="end-date" className="text-sm font-medium text-gray-700">
+                        Bis (End Date)
+                      </label>
+                      <input
+                        id="end-date"
+                        type="date"
+                        value={customEndDate}
+                        onChange={(e) => setCustomEndDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      />
+                    </div>
+                  </div>
+                  {customStartDate && customEndDate && (
+                    <div className="mt-3 text-xs text-gray-600">
+                      📅 Selected range: {new Date(customStartDate).toLocaleDateString('de-DE')} - {new Date(customEndDate).toLocaleDateString('de-DE')}
+                      {(() => {
+                        const start = new Date(customStartDate)
+                        const end = new Date(customEndDate)
+                        const diffDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
+                        return ` (${diffDays} ${diffDays === 1 ? 'Tag' : 'Tage'})`
+                      })()} 
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
