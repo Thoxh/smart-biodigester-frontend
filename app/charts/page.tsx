@@ -7,7 +7,7 @@
  * 
  * Key Features:
  * - Interactive time-series charts for all sensor parameters
- * - Multiple time range selections (1h, 12h, 1d, 1w, 1m)
+ * - Multiple time range selections (1h, 12h, 1d, 1w, 1m, custom)
  * - Adaptive Y-axis scaling based on time range and data variance
  * - Visual alarm zones with color-coded optimal ranges
  * - Mobile-responsive design with touch-friendly controls
@@ -345,24 +345,17 @@ export default function ChartsPage() {
     }
   }
 
+  // Initial data fetch on component mount only
   useEffect(() => {
     fetchData(selectedTimeRange)
-  }, [selectedTimeRange])
-  
-  // Fetch data when custom dates change
-  useEffect(() => {
-    if (selectedTimeRange === 'custom' && customStartDate && customEndDate) {
-      fetchData('custom')
-    }
-  }, [customStartDate, customEndDate, selectedTimeRange])
+  }, [])
 
   /**
    * Handles time range selection changes from the UI.
    * 
-   * Updates the selected time range state, which triggers a useEffect
-   * to fetch new data for the selected range. For custom ranges, it
-   * sets default dates if none are selected. This provides a clean
-   * separation between UI interaction and data fetching logic.
+   * Updates the selected time range state without automatically fetching data.
+   * For custom ranges, it sets default dates if none are selected. Data fetching
+   * is triggered manually via the confirmation button.
    * 
    * @param {TimeRangeKey} timeRange - The newly selected time range
    * 
@@ -383,6 +376,16 @@ export default function ChartsPage() {
       setCustomStartDate(weekAgo.toISOString().split('T')[0])
       setCustomEndDate(now.toISOString().split('T')[0])
     }
+  }
+  
+  /**
+   * Handles the confirmation button click to fetch data for the selected time range.
+   * 
+   * This function is called when the user clicks the "Load Data" button to
+   * fetch sensor data for the currently selected time range and date parameters.
+   */
+  const handleLoadData = () => {
+    fetchData(selectedTimeRange)
   }
   
   /**
@@ -576,6 +579,25 @@ export default function ChartsPage() {
                   )}
                 </div>
               )}
+              
+              {/* Load Data Button */}
+              <div className="flex justify-center pt-4 border-t">
+                <Button
+                  onClick={handleLoadData}
+                  disabled={loading || (selectedTimeRange === 'custom' && (!customStartDate || !customEndDate))}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 text-sm font-medium"
+                  size="sm"
+                >
+                  {loading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Loading...
+                    </>
+                  ) : (
+                    <>📊 Load Data</>
+                  )}
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
